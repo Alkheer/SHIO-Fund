@@ -286,31 +286,26 @@ async function searchMembers() {
   const q = document.getElementById("search").value.trim();
   const results = document.getElementById("results");
 
-  results.textContent = "جارٍ البحث في قاعدة البيانات...";
+  results.textContent = "جارٍ الاتصال بقاعدة البيانات...";
 
-  let query = supabaseClient
+  const { data, error } = await supabaseClient
     .from("members")
-    .select("member_number, full_name, phone, email")
+    .select("member_number, full_name, phone, notes")
     .order("member_number");
 
-  if (q) {
-    const safeQ = q.replace(/[%_,]/g, "");
-    query = query.or(
-      `member_number.ilike.%${safeQ}%,full_name.ilike.%${safeQ}%`
-    );
-  }
-
-  const { data, error } = await query;
-
   if (error) {
-    results.textContent = "فشل البحث: " + error.message;
+    results.textContent = "خطأ من قاعدة البيانات: " + error.message;
     return;
   }
 
-  if (!data || data.length === 0) {
-    results.textContent = "لم يتم العثور على أعضاء.";
-    return;
-  }
+  const filtered = (data || []).filter(m => {
+    const text = `${m.member_number || ""} ${m.full_name || ""}`.toLowerCase();
+    return text.includes(q.toLowerCase());
+  });
+
+  showMembers(filtered);
+}
+
 
   showMembers(data);
 }
