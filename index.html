@@ -1,62 +1,212 @@
--- شغّل هذا الملف كاملاً في Supabase > SQL Editor
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SHIO Fund | إدارة الأعضاء</title>
+<style>
+:root{--bg:#f3f6f8;--card:#fff;--ink:#1f3140;--mut:#64748b;--pri:#0f6b86;--dark:#0e3a4a;--line:#dde6ea;--red:#c0392b}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1a21;--card:#17252f;--ink:#e6eef2;--mut:#93a4af;--pri:#3aa6c4;--dark:#0b2530;--line:#2a3b47}}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Segoe UI",Tahoma,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:linear-gradient(135deg,var(--dark),var(--pri));color:#fff;padding:18px 20px}
+.brand{max-width:1000px;margin:auto;display:flex;align-items:center;gap:14px}
+.brand img{width:56px;height:56px;object-fit:contain;background:#fff;border-radius:12px;padding:4px}
+.brand h1{margin:0;font-size:22px}.brand p{margin:2px 0 0;font-size:13px;opacity:.85}
+.brand .me{margin-inline-start:auto;text-align:left;font-size:13px}
+main{max-width:1000px;margin:20px auto;padding:0 14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 2px 10px rgba(0,0,0,.04)}
+h2{margin:0 0 14px;font-size:20px}
+label{display:block;font-weight:600;font-size:14px;margin:12px 0}
+input,textarea,select{display:block;width:100%;margin-top:6px;padding:11px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font:inherit}
+input:focus,textarea:focus,select:focus{outline:2px solid var(--pri);border-color:transparent}
+button{background:var(--pri);color:#fff;border:0;border-radius:10px;padding:10px 18px;font:inherit;cursor:pointer}
+button.ghost{background:transparent;color:var(--pri);border:1px solid var(--pri)}
+button.danger{background:var(--red)}
+button:disabled{opacity:.6;cursor:wait}
+.login{max-width:400px;margin:40px auto}
+.bar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.bar input,.bar select{margin:0;flex:1;min-width:140px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
+.m{display:flex;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+.av{width:64px;height:64px;border-radius:50%;object-fit:cover;background:var(--line);flex:none;display:flex;align-items:center;justify-content:center;font-size:24px;color:var(--mut)}
+.m b{display:block}.m small{color:var(--mut);display:block;margin-top:2px}
+.tag{display:inline-block;background:var(--line);border-radius:20px;padding:1px 10px;font-size:12px;margin-top:4px}
+.acts{display:flex;gap:6px;margin-top:8px}.acts button{padding:5px 12px;font-size:13px}
+.hidden{display:none!important}
+.msg{color:var(--mut);font-size:14px;min-height:20px}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:14px;overflow:auto}
+.modal .card{width:100%;max-width:480px;max-height:95vh;overflow:auto}
+.row{display:flex;gap:10px;justify-content:flex-start;margin-top:14px}
+</style>
+</head>
+<body>
+<header><div class="brand">
+  <img src="shio-logo.jpg" alt="SHIO">
+  <div><h1>SHIO Fund</h1><p>نظام إدارة الأعضاء والأسر | Member Management</p></div>
+  <div class="me hidden" id="me"><div id="meName"></div><button class="ghost" style="margin-top:4px;color:#fff;border-color:#fff" onclick="logout()">خروج</button></div>
+</div></header>
 
-create table if not exists profiles (
-  id uuid primary key references auth.users on delete cascade,
-  full_name text,
-  role text not null default 'region_manager' check (role in ('admin','region_manager')),
-  region text
-);
+<main>
+<section class="card login" id="loginCard">
+  <h2>تسجيل الدخول</h2>
+  <label>البريد الإلكتروني<input id="email" type="email" autocomplete="username"></label>
+  <label>كلمة المرور<input id="pass" type="password" autocomplete="current-password"></label>
+  <button id="loginBtn" onclick="login()">دخول</button>
+  <p class="msg" id="loginMsg"></p>
+</section>
 
-alter table members
-  add column if not exists region text,
-  add column if not exists address text,
-  add column if not exists photo_path text,
-  add column if not exists created_by uuid default auth.uid(),
-  add column if not exists created_at timestamptz default now();
+<section class="hidden" id="app">
+  <div class="bar">
+    <input id="q" placeholder="بحث بالاسم أو الرقم أو الهاتف" oninput="render()">
+    <select id="regionFilter" onchange="render()"></select>
+    <button onclick="openForm()">+ عضو جديد</button>
+  </div>
+  <p class="msg" id="count"></p>
+  <div class="grid" id="list"></div>
+</section>
+</main>
 
-create unique index if not exists members_number_key on members(member_number);
+<div class="modal hidden" id="modal"><form class="card" id="form">
+  <h2 id="formTitle">عضو جديد</h2>
+  <label>الصورة<input id="photo" type="file" accept="image/*"></label>
+  <label>رقم العضوية<input id="number" required placeholder="SHIO-001"></label>
+  <label>الاسم الكامل<input id="name" required></label>
+  <label>الهاتف<input id="phone" inputmode="tel"></label>
+  <label>المنطقة<input id="region" required list="regions"></label>
+  <datalist id="regions"></datalist>
+  <label>العنوان<input id="address"></label>
+  <label>ملاحظات<textarea id="notes" rows="3"></textarea></label>
+  <p class="msg" id="formMsg"></p>
+  <div class="row"><button id="saveBtn" type="submit">حفظ</button><button type="button" class="ghost" onclick="closeForm()">إلغاء</button></div>
+</form></div>
 
-create or replace function is_admin() returns boolean
-language sql security definer stable set search_path = public as
-$$ select exists(select 1 from profiles where id = auth.uid() and role = 'admin') $$;
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const sb = supabase.createClient("https://pigepmydufgughrgcpja.supabase.co","sb_publishable_CyZug3hKmkTbgVxQZFw0dA_GZwrCqV6");
+const $ = id => document.getElementById(id);
+let me = null, members = [], editing = null;
+const isAdmin = () => me && me.role === "admin";
 
-create or replace function my_region() returns text
-language sql security definer stable set search_path = public as
-$$ select region from profiles where id = auth.uid() $$;
+async function login(){
+  const b=$("loginBtn"), m=$("loginMsg");
+  if(!$("email").value||!$("pass").value){m.textContent="أدخل البريد وكلمة المرور.";return}
+  b.disabled=true; m.textContent="جارٍ الدخول...";
+  try{
+    const {data,error}=await sb.auth.signInWithPassword({email:$("email").value.trim(),password:$("pass").value});
+    if(error){m.textContent="فشل الدخول: "+error.message;return}
+    await start(data.session);
+  }catch(e){m.textContent="تعذر الاتصال بالإنترنت."}
+  finally{b.disabled=false}
+}
 
-alter table profiles enable row level security;
-alter table members enable row level security;
+async function logout(){
+  await sb.auth.signOut(); me=null; members=[];
+  $("app").classList.add("hidden"); $("me").classList.add("hidden");
+  $("loginCard").classList.remove("hidden"); $("pass").value=""; $("loginMsg").textContent="";
+}
 
-drop policy if exists "read for logged in" on members;
-drop policy if exists "insert for logged in" on members;
+async function start(session){
+  if(!session){return}
+  const {data,error}=await sb.from("profiles").select("*").eq("id",session.user.id).maybeSingle();
+  if(error||!data){
+    await sb.auth.signOut();
+    $("loginMsg").textContent="حسابك غير مفعّل بعد. تواصل مع المدير العام.";
+    return;
+  }
+  me=data;
+  $("loginCard").classList.add("hidden"); $("app").classList.remove("hidden"); $("me").classList.remove("hidden");
+  $("meName").textContent=(me.full_name||session.user.email)+" — "+(isAdmin()?"مدير عام":(me.region||""));
+  $("regionFilter").classList.toggle("hidden",!isAdmin());
+  await loadMembers();
+}
 
-create policy p_self on profiles for select to authenticated
-  using (id = auth.uid() or is_admin());
+async function loadMembers(){
+  $("count").textContent="جارٍ التحميل...";
+  const {data,error}=await sb.from("members").select("*").order("member_number");
+  if(error){$("count").textContent="تعذر التحميل: "+error.message;return}
+  members=data||[];
+  const paths=members.filter(m=>m.photo_path).map(m=>m.photo_path);
+  if(paths.length){
+    const {data:urls}=await sb.storage.from("member-photos").createSignedUrls(paths,3600);
+    (urls||[]).forEach(u=>{const m=members.find(x=>x.photo_path===u.path);if(m)m.url=u.signedUrl});
+  }
+  const regs=[...new Set(members.map(m=>m.region).filter(Boolean))].sort();
+  $("regionFilter").replaceChildren(new Option("كل المناطق",""),...regs.map(r=>new Option(r,r)));
+  $("regions").replaceChildren(...regs.map(r=>new Option(r)));
+  render();
+}
 
-create policy m_sel on members for select to authenticated
-  using (is_admin() or region = my_region());
-create policy m_ins on members for insert to authenticated
-  with check (is_admin() or region = my_region());
-create policy m_upd on members for update to authenticated
-  using (is_admin() or region = my_region())
-  with check (is_admin() or region = my_region());
-create policy m_del on members for delete to authenticated
-  using (is_admin());
+function render(){
+  const q=$("q").value.trim().toLowerCase(), rf=$("regionFilter").value;
+  const list=members.filter(m=>(!rf||m.region===rf)&&(!q||[m.member_number,m.full_name,m.phone].join(" ").toLowerCase().includes(q)));
+  $("count").textContent=list.length+" عضو";
+  $("list").replaceChildren(...list.map(card));
+}
 
--- مخزن الصور (خاص)
-insert into storage.buckets (id, name, public)
-values ('member-photos', 'member-photos', false)
-on conflict (id) do nothing;
+function el(t,c,txt){const e=document.createElement(t);if(c)e.className=c;if(txt!=null)e.textContent=txt;return e}
 
-create policy ph_all on storage.objects for all to authenticated
-  using (bucket_id = 'member-photos')
-  with check (bucket_id = 'member-photos');
+function card(m){
+  const d=el("div","m");
+  let av;
+  if(m.url){av=el("img","av");av.src=m.url;av.alt=""}else av=el("div","av","👤");
+  const info=el("div");
+  info.append(el("b",null,m.full_name),el("small",null,m.member_number),el("small",null,m.phone||"بدون هاتف"));
+  if(m.region)info.append(el("span","tag",m.region));
+  const a=el("div","acts");
+  const e=el("button","ghost","تعديل");e.onclick=()=>openForm(m);a.append(e);
+  if(isAdmin()){const x=el("button","danger","حذف");x.onclick=()=>del(m);a.append(x)}
+  info.append(a); d.append(av,info); return d;
+}
 
--- اجعل نفسك مديراً عاماً (بدّل البريد ببريدك في Supabase Auth)
-insert into profiles (id, full_name, role)
-select id, 'المدير العام', 'admin' from auth.users where email = 'alkheer8844@gmail.com'
-on conflict (id) do update set role = 'admin';
+function openForm(m){
+  editing=m||null; $("form").reset(); $("formMsg").textContent="";
+  $("formTitle").textContent=m?"تعديل عضو":"عضو جديد";
+  $("number").value=m?m.member_number:""; $("number").readOnly=!!m;
+  $("name").value=m?m.full_name:""; $("phone").value=m?.phone||"";
+  $("region").value=m?m.region||"":(isAdmin()?"":me.region||""); $("region").readOnly=!isAdmin();
+  $("address").value=m?.address||""; $("notes").value=m?.notes||"";
+  $("modal").classList.remove("hidden");
+}
+function closeForm(){$("modal").classList.add("hidden")}
 
--- لإضافة مسؤول منطقة: أنشئ المستخدم من Authentication > Users ثم:
--- insert into profiles (id, full_name, role, region)
--- select id, 'اسم المسؤول', 'region_manager', 'اسم المنطقة' from auth.users where email = 'manager@example.com';
+$("form").addEventListener("submit",async e=>{
+  e.preventDefault();
+  const b=$("saveBtn"), msg=$("formMsg"); b.disabled=true; msg.textContent="جارٍ الحفظ...";
+  try{
+    const row={
+      member_number:$("number").value.trim(), full_name:$("name").value.trim(),
+      phone:$("phone").value.trim()||null, region:isAdmin()?$("region").value.trim():me.region,
+      address:$("address").value.trim()||null, notes:$("notes").value.trim()||null
+    };
+    const f=$("photo").files[0];
+    if(f){
+      if(f.size>3*1024*1024){msg.textContent="الصورة أكبر من 3MB.";return}
+      const ext=(f.name.split(".").pop()||"jpg").toLowerCase().replace(/[^a-z0-9]/g,"");
+      const path=crypto.randomUUID()+"/"+Date.now()+"."+ext;
+      const {error:ue}=await sb.storage.from("member-photos").upload(path,f);
+      if(ue){msg.textContent="تعذر رفع الصورة: "+ue.message;return}
+      row.photo_path=path;
+    }
+    const {error}=editing
+      ? await sb.from("members").update(row).eq("member_number",editing.member_number)
+      : await sb.from("members").insert(row);
+    if(error){msg.textContent="لم يتم الحفظ: "+error.message;return}
+    if(f&&editing?.photo_path)await sb.storage.from("member-photos").remove([editing.photo_path]);
+    closeForm(); await loadMembers();
+  }catch(err){msg.textContent="حدث خطأ غير متوقع."}
+  finally{b.disabled=false}
+});
+
+async function del(m){
+  if(!confirm("حذف العضو "+m.full_name+"؟ لا يمكن التراجع."))return;
+  const {error}=await sb.from("members").delete().eq("member_number",m.member_number);
+  if(error){alert("تعذر الحذف: "+error.message);return}
+  if(m.photo_path)await sb.storage.from("member-photos").remove([m.photo_path]);
+  await loadMembers();
+}
+
+sb.auth.getSession().then(({data})=>start(data.session));
+</script>
+</body>
+</html>
