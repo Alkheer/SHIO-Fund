@@ -281,24 +281,40 @@ function showMembers(list) {
   });
 }
 
+
 async function searchMembers() {
   const q = document.getElementById("search").value.trim();
+  const results = document.getElementById("results");
 
-  const { data, error } = await supabaseClient
+  results.textContent = "جارٍ البحث في قاعدة البيانات...";
+
+  let query = supabaseClient
     .from("members")
-    .select("member_number, full_name, phone, notes")
-    .or("member_number.ilike.%" + q.replace(/[%_,]/g, "") +
-        "%,full_name.ilike.%" + q.replace(/[%_,]/g, "") + "%")
+    .select("member_number, full_name, phone, email")
     .order("member_number");
 
+  if (q) {
+    const safeQ = q.replace(/[%_,]/g, "");
+    query = query.or(
+      `member_number.ilike.%${safeQ}%,full_name.ilike.%${safeQ}%`
+    );
+  }
+
+  const { data, error } = await query;
+
   if (error) {
-    document.getElementById("results").textContent =
-      "فشل البحث: " + error.message;
+    results.textContent = "فشل البحث: " + error.message;
     return;
   }
 
-  showMembers(data || []);
+  if (!data || data.length === 0) {
+    results.textContent = "لم يتم العثور على أعضاء.";
+    return;
+  }
+
+  showMembers(data);
 }
+
 </script>
 
 
