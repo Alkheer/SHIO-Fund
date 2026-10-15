@@ -1,384 +1,62 @@
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SHIO Fund | إدارة الأعضاء</title>
-<style>
-* { box-sizing: border-box; }
+-- شغّل هذا الملف كاملاً في Supabase > SQL Editor
 
-body {
-  margin: 0;
-  font-family: Arial, sans-serif;
-  background: #f1f5f7;
-  color: #243746;
-}
+create table if not exists profiles (
+  id uuid primary key references auth.users on delete cascade,
+  full_name text,
+  role text not null default 'region_manager' check (role in ('admin','region_manager')),
+  region text
+);
 
-header {
-  background: #123b4a;
-  color: white;
-  padding: 25px;
-  text-align: center;
-}
+alter table members
+  add column if not exists region text,
+  add column if not exists address text,
+  add column if not exists photo_path text,
+  add column if not exists created_by uuid default auth.uid(),
+  add column if not exists created_at timestamptz default now();
 
-.brand {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 20px;
-  flex-wrap: wrap;
-  text-align: center;
-}
+create unique index if not exists members_number_key on members(member_number);
 
-.brand img {
-  width: 110px;
-  height: 110px;
-  object-fit: contain;
-  background: white;
-  border-radius: 10px;
-  padding: 5px;
-}
+create or replace function is_admin() returns boolean
+language sql security definer stable set search_path = public as
+$$ select exists(select 1 from profiles where id = auth.uid() and role = 'admin') $$;
 
-.brand h1 { margin: 0 0 8px; }
-.brand p { margin: 4px 0; }
+create or replace function my_region() returns text
+language sql security definer stable set search_path = public as
+$$ select region from profiles where id = auth.uid() $$;
 
-main {
-  max-width: 900px;
-  margin: 25px auto;
-  padding: 0 15px;
-}
+alter table profiles enable row level security;
+alter table members enable row level security;
 
-.card {
-  background: white;
-  padding: 22px;
-  margin-bottom: 20px;
-  border-radius: 12px;
-  border: 1px solid #dce5e9;
-  text-align: right;
-}
+drop policy if exists "read for logged in" on members;
+drop policy if exists "insert for logged in" on members;
 
-.warning {
-  background: #fff8e7;
-  border-right: 5px solid #d99a16;
-  padding: 15px;
-  border-radius: 8px;
-  margin-bottom: 20px;
-}
+create policy p_self on profiles for select to authenticated
+  using (id = auth.uid() or is_admin());
 
-h2 {
-  display: block;
-  color: #123b4a;
-  font-size: 24px;
-  font-weight: bold;
-  margin: 0 0 20px;
-  text-align: right;
-}
+create policy m_sel on members for select to authenticated
+  using (is_admin() or region = my_region());
+create policy m_ins on members for insert to authenticated
+  with check (is_admin() or region = my_region());
+create policy m_upd on members for update to authenticated
+  using (is_admin() or region = my_region())
+  with check (is_admin() or region = my_region());
+create policy m_del on members for delete to authenticated
+  using (is_admin());
 
-label {
-  display: block;
-  color: #243746;
-  font-size: 16px;
-  font-weight: bold;
-  margin: 14px 0;
-  text-align: right;
-}
+-- مخزن الصور (خاص)
+insert into storage.buckets (id, name, public)
+values ('member-photos', 'member-photos', false)
+on conflict (id) do nothing;
 
-input, textarea {
-  display: block;
-  width: 100%;
-  padding: 12px;
-  margin-top: 6px;
-  border: 1px solid #bdcbd2;
-  border-radius: 7px;
-  font-size: 16px;
-  color: #243746;
-  background: #ffffff;
-  text-align: right;
-}
+create policy ph_all on storage.objects for all to authenticated
+  using (bucket_id = 'member-photos')
+  with check (bucket_id = 'member-photos');
 
-input::placeholder {
-  color: #64748b;
-  opacity: 1;
-}
+-- اجعل نفسك مديراً عاماً (بدّل البريد ببريدك في Supabase Auth)
+insert into profiles (id, full_name, role)
+select id, 'المدير العام', 'admin' from auth.users where email = 'alkheer8844@gmail.com'
+on conflict (id) do update set role = 'admin';
 
-button {
-  display: block;
-  margin-right: 0;
-  margin-left: auto;
-  background: #12617a;
-  color: white;
-  border: 0;
-  padding: 11px 20px;
-  border-radius: 7px;
-  cursor: pointer;
-  margin-top: 8px;
-  font-size: 15px;
-}
-
-.member {
-  padding: 12px;
-  border: 1px solid #dce5e9;
-  border-radius: 8px;
-  margin-top: 12px;
-}
-
-.small { color: #64748b; font-size: 13px; }
-
-.hidden { display: none; }
-
-.toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 15px;
-}
-.toolbar button { margin: 0; }
-</style>
-</head>
-<body>
-
-<header>
-  <div class="brand">
-    <img src="shio-logo.jpg" alt="SHIO VZW Logo">
-    <div>
-      <h1>SHIO Fund</h1>
-      <p>نظام إدارة ملفات الأعضاء والأسر</p>
-      <p>Member &amp; Family Management</p>
-    </div>
-  </div>
-</header>
-
-<main>
-
-  <!-- تسجيل الدخول -->
-  <section class="card" id="loginCard">
-    <h2>تسجيل الدخول | Sign in</h2>
-    <label>البريد الإلكتروني
-      <input id="loginEmail" type="email" required placeholder="name@example.com">
-    </label>
-    <label>كلمة المرور
-      <input id="loginPassword" type="password" required>
-    </label>
-    <button type="button" onclick="login()">دخول</button>
-    <p id="loginMessage" class="small"></p>
-  </section>
-
-  <!-- التطبيق (يظهر بعد تسجيل الدخول) -->
-  <div id="appArea" class="hidden">
-
-    <div class="toolbar">
-      <span class="small" id="userInfo"></span>
-      <button type="button" onclick="logout()">تسجيل الخروج</button>
-    </div>
-
-    <section class="card">
-      <h2>البحث عن عضو</h2>
-      <input id="search" placeholder="الاسم أو رقم العضوية">
-      <button type="button" onclick="searchMembers()">بحث</button>
-      <div id="results"></div>
-    </section>
-
-    <section class="card">
-      <h2>إضافة عضو جديد</h2>
-      <form id="memberForm">
-        <label>رقم العضوية
-          <input id="number" required placeholder="SHIO-001">
-        </label>
-        <label>الاسم الكامل
-          <input id="name" required>
-        </label>
-        <label>رقم الهاتف
-          <input id="phone">
-        </label>
-        <label>ملاحظات
-          <textarea id="notes" rows="3"></textarea>
-        </label>
-        <button type="submit">إضافة عضو</button>
-      </form>
-    </section>
-
-  </div>
-
-</main>
-
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script>
-const SUPABASE_URL = "https://pigepmydufgughrgcpja.supabase.co";
-const SUPABASE_KEY = "sb_publishable_CyZug3hKmkTbgVxQZFw0dA_GZwrCqV6";
-
-const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-
-function showApp(session) {
-  const loggedIn = !!session;
-  document.getElementById("loginCard").classList.toggle("hidden", loggedIn);
-  document.getElementById("appArea").classList.toggle("hidden", !loggedIn);
-  document.getElementById("userInfo").textContent =
-    loggedIn ? session.user.email : "";
-}
-
-async function login() {
-  const email = document.getElementById("loginEmail").value.trim();
-  const password = document.getElementById("loginPassword").value;
-  const message = document.getElementById("loginMessage");
-
-  if (!email || !password) {
-    message.textContent = "أدخل البريد الإلكتروني وكلمة المرور.";
-    return;
-  }
-
-  message.textContent = "جارٍ تسجيل الدخول...";
-
-  try {
-    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-    if (error) {
-      message.textContent = "فشل تسجيل الدخول: " + error.message;
-      return;
-    }
-
-    message.textContent = "";
-    showApp(data.session);
-    await loadMembers();
-  } catch (err) {
-    message.textContent = "تعذر الاتصال. تحقق من الإنترنت ثم أعد المحاولة.";
-    console.error("Login error:", err);
-  }
-}
-
-async function logout() {
-  const { error } = await supabaseClient.auth.signOut();
-  if (error) {
-    document.getElementById("results").textContent = "تعذر تسجيل الخروج: " + error.message;
-    return;
-  }
-  showApp(null);
-  document.getElementById("results").replaceChildren();
-  document.getElementById("loginPassword").value = "";
-}
-
-async function loadMembers() {
-  const results = document.getElementById("results");
-  results.textContent = "جارٍ تحميل الأعضاء...";
-
-  try {
-    const { data, error } = await supabaseClient
-      .from("members")
-      .select("member_number, full_name, phone, notes")
-      .order("member_number");
-
-    if (error) {
-      results.textContent = "تعذر تحميل الأعضاء: " + error.message;
-      return;
-    }
-
-    showMembers(data || []);
-  } catch (err) {
-    results.textContent = "حدث خطأ أثناء تحميل الأعضاء. افتح Console لمعرفة التفاصيل.";
-    console.error("Load members error:", err);
-  }
-}
-
-document.getElementById("memberForm").addEventListener("submit", async function (e) {
-  e.preventDefault();
-
-  const { data: sessionData } = await supabaseClient.auth.getSession();
-
-  if (!sessionData.session) {
-    alert("يرجى تسجيل الدخول أولاً.");
-    return;
-  }
-
-  const number = document.getElementById("number").value.trim();
-  const name = document.getElementById("name").value.trim();
-  const phone = document.getElementById("phone").value.trim();
-  const notes = document.getElementById("notes").value.trim();
-
-  const { error } = await supabaseClient.from("members").insert({
-    member_number: number,
-    full_name: name,
-    phone: phone || null,
-    notes: notes || null
-  });
-
-  if (error) {
-    alert("لم يتم حفظ العضو: " + error.message);
-    return;
-  }
-
-  this.reset();
-  alert("تم حفظ العضو في قاعدة البيانات.");
-  await loadMembers();
-});
-
-function showMembers(list) {
-  const results = document.getElementById("results");
-  results.replaceChildren();
-
-  if (!list.length) {
-    results.textContent = "لا توجد نتائج.";
-    return;
-  }
-
-  list.forEach(m => {
-    const item = document.createElement("div");
-    item.className = "member";
-
-    const title = document.createElement("strong");
-    title.textContent = m.member_number + " — " + m.full_name;
-
-    const details = document.createElement("p");
-    details.textContent =
-      "الهاتف: " + (m.phone || "غير مسجل") +
-      " | ملاحظات: " + (m.notes || "لا توجد");
-
-    item.append(title, details);
-    results.appendChild(item);
-  });
-}
-
-async function searchMembers() {
-  const q = document.getElementById("search").value.trim().toLocaleLowerCase();
-  const results = document.getElementById("results");
-  results.textContent = "جارٍ البحث...";
-
-  try {
-    // أقل من 100 عضو: نجلب السجلات المسموح للمستخدم برؤيتها ثم نبحث محلياً.
-    const { data, error } = await supabaseClient
-      .from("members")
-      .select("member_number, full_name, phone, notes")
-      .order("member_number");
-
-    if (error) {
-      results.textContent = "فشل البحث: " + error.message;
-      return;
-    }
-
-    const members = data || [];
-    const filtered = q ? members.filter(m =>
-      `${m.member_number || ""} ${m.full_name || ""}`.toLocaleLowerCase().includes(q)
-    ) : members;
-
-    showMembers(filtered);
-  } catch (err) {
-    results.textContent = "حدث خطأ أثناء البحث. حدّث الصفحة وحاول مجدداً.";
-    console.error("Search members error:", err);
-  }
-}
-
-// تذكّر الجلسة بعد تحديث الصفحة
-supabaseClient.auth.getSession().then(({ data, error }) => {
-  if (error) {
-    document.getElementById("loginMessage").textContent = "تعذر استعادة جلسة الدخول: " + error.message;
-    showApp(null);
-    return;
-  }
-  showApp(data.session);
-  if (data.session) loadMembers();
-}).catch(err => {
-  document.getElementById("loginMessage").textContent = "تعذر الاتصال بخدمة تسجيل الدخول.";
-  console.error("Session restore error:", err);
-});
-</script>
-
-</body>
-</html>
+-- لإضافة مسؤول منطقة: أنشئ المستخدم من Authentication > Users ثم:
+-- insert into profiles (id, full_name, role, region)
+-- select id, 'اسم المسؤول', 'region_manager', 'اسم المنطقة' from auth.users where email = 'manager@example.com';
