@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+	<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
@@ -76,6 +76,21 @@ button:disabled{opacity:.6;cursor:wait}
   <label>المنطقة<input id="region" required list="regions"></label>
   <datalist id="regions"></datalist>
   <label>العنوان<input id="address"></label>
+  <label>تاريخ الميلاد<input id="birth" type="date"></label>
+  <label>الجنس<select id="gender"><option value="">—</option><option>ذكر</option><option>أنثى</option></select></label>
+  <label>الحالة الاجتماعية<input id="marital"></label>
+  <label>البريد الإلكتروني<input id="memail" type="email"></label>
+  <label>رقم الهوية / الجواز<input id="idno"></label>
+  <label>جهة اتصال للطوارئ<input id="emerg" placeholder="الاسم والهاتف"></label>
+  <label>الوصية<textarea id="will" rows="4"></textarea></label>
+  <div id="docs" class="hidden">
+    <h2 style="font-size:16px;margin-top:18px">المستندات</h2>
+    <div id="docList" class="msg"></div>
+    <label>نوع المستند<select id="docType"><option>وصية</option><option>هوية</option><option>جواز سفر</option><option>أخرى</option></select></label>
+    <input id="docFile" type="file">
+    <button type="button" class="ghost" style="margin-top:8px" onclick="addDoc()">رفع المستند</button>
+  </div>
+  <p class="msg" id="newNote">بعد حفظ العضو افتح ملفه مرة أخرى لإضافة المستندات.</p>
   <label>ملاحظات<textarea id="notes" rows="3"></textarea></label>
   <p class="msg" id="formMsg"></p>
   <div class="row"><button id="saveBtn" type="submit">حفظ</button><button type="button" class="ghost" onclick="closeForm()">إلغاء</button></div>
@@ -154,18 +169,24 @@ function card(m){
   info.append(el("b",null,m.full_name),el("small",null,m.member_number),el("small",null,m.phone||"بدون هاتف"));
   if(m.region)info.append(el("span","tag",m.region));
   const a=el("div","acts");
-  const e=el("button","ghost","تعديل");e.onclick=()=>openForm(m);a.append(e);
+  const e=el("button","ghost","فتح الملف");e.onclick=()=>openForm(m);a.append(e);
   if(isAdmin()){const x=el("button","danger","حذف");x.onclick=()=>del(m);a.append(x)}
   info.append(a); d.append(av,info); return d;
 }
 
 function openForm(m){
   editing=m||null; $("form").reset(); $("formMsg").textContent="";
-  $("formTitle").textContent=m?"تعديل عضو":"عضو جديد";
+  $("formTitle").textContent=m?"ملف العضو":"عضو جديد";
   $("number").value=m?m.member_number:""; $("number").readOnly=!!m;
   $("name").value=m?m.full_name:""; $("phone").value=m?.phone||"";
   $("region").value=m?m.region||"":(isAdmin()?"":me.region||""); $("region").readOnly=!isAdmin();
   $("address").value=m?.address||""; $("notes").value=m?.notes||"";
+  $("birth").value=m?.birth_date||""; $("gender").value=m?.gender||"";
+  $("marital").value=m?.marital_status||""; $("memail").value=m?.email||"";
+  $("idno").value=m?.id_number||""; $("emerg").value=m?.emergency_contact||"";
+  $("will").value=m?.will_text||"";
+  $("docs").classList.toggle("hidden",!m); $("newNote").classList.toggle("hidden",!!m);
+  if(m)loadDocs();
   $("modal").classList.remove("hidden");
 }
 function closeForm(){$("modal").classList.add("hidden")}
@@ -177,7 +198,11 @@ $("form").addEventListener("submit",async e=>{
     const row={
       member_number:$("number").value.trim(), full_name:$("name").value.trim(),
       phone:$("phone").value.trim()||null, region:isAdmin()?$("region").value.trim():me.region,
-      address:$("address").value.trim()||null, notes:$("notes").value.trim()||null
+      address:$("address").value.trim()||null, notes:$("notes").value.trim()||null,
+      birth_date:$("birth").value||null, gender:$("gender").value||null,
+      marital_status:$("marital").value.trim()||null, email:$("memail").value.trim()||null,
+      id_number:$("idno").value.trim()||null, emergency_contact:$("emerg").value.trim()||null,
+      will_text:$("will").value.trim()||null
     };
     const f=$("photo").files[0];
     if(f){
@@ -199,14 +224,51 @@ $("form").addEventListener("submit",async e=>{
 });
 
 async function del(m){
-  if(!confirm("حذف العضو "+m.full_name+"؟ لا يمكن التراجع."))return;
+  if(!confirm("حذف العضو "+m.full_name+" وكل مستنداته؟ لا يمكن التراجع."))return;
+  const {data:dd}=await sb.from("member_documents").select("file_path").eq("member_number",m.member_number);
   const {error}=await sb.from("members").delete().eq("member_number",m.member_number);
   if(error){alert("تعذر الحذف: "+error.message);return}
   if(m.photo_path)await sb.storage.from("member-photos").remove([m.photo_path]);
+  if(dd?.length)await sb.storage.from("member-docs").remove(dd.map(x=>x.file_path));
   await loadMembers();
 }
 
-sb.auth.getSession().then(({data})=>start(data.session)); 
+async function loadDocs(){
+  const box=$("docList"); box.textContent="جارٍ التحميل...";
+  const {data,error}=await sb.from("member_documents").select("*").eq("member_number",editing.member_number).order("created_at");
+  if(error){box.textContent="تعذر تحميل المستندات: "+error.message;return}
+  if(!data.length){box.textContent="لا توجد مستندات.";return}
+  box.replaceChildren(...data.map(d=>{
+    const r=el("div","acts");
+    const o=el("button","ghost",d.doc_type+" — "+d.title); o.type="button";
+    o.onclick=async()=>{const {data:u}=await sb.storage.from("member-docs").createSignedUrl(d.file_path,300);if(u)window.open(u.signedUrl,"_blank")};
+    r.append(o);
+    if(isAdmin()){
+      const x=el("button","danger","حذف"); x.type="button";
+      x.onclick=async()=>{if(!confirm("حذف المستند؟"))return;
+        await sb.storage.from("member-docs").remove([d.file_path]);
+        await sb.from("member_documents").delete().eq("id",d.id); loadDocs()};
+      r.append(x);
+    }
+    return r;
+  }));
+}
+
+async function addDoc(){
+  const f=$("docFile").files[0], msg=$("formMsg");
+  if(!f){msg.textContent="اختر ملفاً أولاً.";return}
+  if(f.size>10*1024*1024){msg.textContent="الملف أكبر من 10MB.";return}
+  msg.textContent="جارٍ رفع المستند...";
+  const ext=(f.name.split(".").pop()||"bin").toLowerCase().replace(/[^a-z0-9]/g,"");
+  const path=crypto.randomUUID()+"/"+Date.now()+"."+ext;
+  const {error:ue}=await sb.storage.from("member-docs").upload(path,f);
+  if(ue){msg.textContent="تعذر الرفع: "+ue.message;return}
+  const {error}=await sb.from("member_documents").insert({member_number:editing.member_number,doc_type:$("docType").value,title:f.name,file_path:path});
+  if(error){msg.textContent="تعذر الحفظ: "+error.message;return}
+  $("docFile").value=""; msg.textContent=""; loadDocs();
+}
+
+sb.auth.getSession().then(({data})=>start(data.session));
 </script>
 </body>
 </html>
